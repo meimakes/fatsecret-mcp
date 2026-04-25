@@ -23,11 +23,12 @@ WORKDIR /app
 COPY pyproject.toml README.md LICENSE ./
 COPY fatsecret_mcp ./fatsecret_mcp
 
-RUN pip install --no-cache-dir . mcp-proxy
+RUN pip install --no-cache-dir .
 
 ENV PYTHONUNBUFFERED=1
 
 # Railway / Fly / Cloud Run inject $PORT; default 8000 for local.
 EXPOSE 8000
 
-CMD ["sh", "-c", "echo Starting on port ${PORT:-8000}; exec mcp-proxy --host 0.0.0.0 --port ${PORT:-8000} --pass-environment fatsecret-mcp serve"]
+# FastMCP serves SSE natively — no mcp-proxy needed (which mangled tool params under SSE bridging).
+CMD ["sh", "-c", "exec fatsecret-mcp serve --transport sse --host 0.0.0.0 --port ${PORT:-8000}"]

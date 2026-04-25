@@ -19,7 +19,11 @@ from .oauth import Consumer
 
 def cmd_serve(args: argparse.Namespace) -> int:
     from .server import build_server
-    build_server().run()
+    server = build_server()
+    if args.transport != "stdio":
+        server.settings.host = args.host
+        server.settings.port = args.port
+    server.run(transport=args.transport)
     return 0
 
 
@@ -73,7 +77,12 @@ def cmd_config_path(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="fatsecret-mcp", description=__doc__)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("serve", help="run the MCP stdio server (default for MCP clients)").set_defaults(func=cmd_serve)
+    serve = sub.add_parser("serve", help="run the MCP server (stdio by default; sse / streamable-http for hosted deploys)")
+    serve.add_argument("--transport", choices=["stdio", "sse", "streamable-http"], default="stdio",
+                       help="Transport. stdio (default) for local MCP clients; sse for hosted deploys; streamable-http for the newer MCP HTTP transport.")
+    serve.add_argument("--host", default="0.0.0.0", help="Bind host for sse/streamable-http (default: 0.0.0.0)")
+    serve.add_argument("--port", type=int, default=8000, help="Bind port for sse/streamable-http (default: 8000)")
+    serve.set_defaults(func=cmd_serve)
     sub.add_parser("auth", help="interactive 3-legged OAuth 1.0a setup").set_defaults(func=cmd_auth)
     sub.add_parser("whoami", help="print the authenticated profile").set_defaults(func=cmd_whoami)
     sub.add_parser("config-path", help="print the config file path").set_defaults(func=cmd_config_path)
