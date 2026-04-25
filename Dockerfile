@@ -19,7 +19,11 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir fatsecret-mcp mcp-proxy
+# Copy the package source so the Dockerfile works from a fresh clone (no PyPI dep).
+COPY pyproject.toml README.md LICENSE ./
+COPY fatsecret_mcp ./fatsecret_mcp
+
+RUN pip install --no-cache-dir . mcp-proxy
 
 ENV PYTHONUNBUFFERED=1
 
