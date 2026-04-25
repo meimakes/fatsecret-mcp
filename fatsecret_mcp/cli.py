@@ -23,6 +23,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
     if args.transport != "stdio":
         server.settings.host = args.host
         server.settings.port = args.port
+        # FastMCP's default DNS rebinding protection only allows localhost hosts.
+        # That defends against a browser tricking a local MCP server, which isn't
+        # the threat for a hosted SSE deploy behind HTTPS — disable so external
+        # hostnames (e.g. Railway's *.up.railway.app) reach the SSE endpoint.
+        server.settings.transport_security.enable_dns_rebinding_protection = False
     server.run(transport=args.transport)
     return 0
 
