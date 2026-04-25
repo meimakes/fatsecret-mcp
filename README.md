@@ -101,16 +101,33 @@ For agents that aren't on the same host as the FS config file (a hosted bot, a p
 
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template?template=https%3A%2F%2Fgithub.com%2Fmeimakes%2Ffatsecret-mcp)
 
-Click the button → Railway clones the repo, builds the included `Dockerfile`, and prompts you for the four FatSecret env vars below. Build wraps the stdio MCP in [`mcp-proxy`](https://github.com/sparfenyuk/mcp-proxy) and exposes `/sse` on Railway's `$PORT`.
+The button clones the repo, builds the `Dockerfile`, wraps the stdio MCP in [`mcp-proxy`](https://github.com/sparfenyuk/mcp-proxy), and exposes `/sse` on Railway's `$PORT`. **But it can't do the FatSecret OAuth dance for you** — that's interactive (browser + PIN). Run the dance locally first, then paste the four resulting tokens into Railway's env-var prompt.
+
+### Before you click the button
+
+You need four values. The first two come from FatSecret's dev console; the last two come from running the OAuth flow locally.
+
+**1. Register an app on FatSecret** at https://platform.fatsecret.com → API Keys. Toggle on **REST API OAuth 1.0 Credentials**, copy the consumer key + consumer secret.
+
+**2. Run the OAuth flow locally** to get a user-scoped access token for *your* food diary:
+
+```bash
+pip install fatsecret-mcp
+fatsecret-mcp auth
+```
+
+You'll be prompted for the consumer key + secret from step 1, then shown a URL. Open it in a browser signed in to your FatSecret **user account** (the one with your diary, not the dev account), click Allow, and FatSecret shows a numeric PIN. Paste it back. The user-scoped tokens land in `~/.config/fatsecret-mcp/config.json`.
+
+**3. Click the Deploy button.** Railway prompts for the four env vars below — fill from the values you now have.
 
 ### Required env vars
 
 | Var | Where to get it |
 |-----|-----------------|
-| `FATSECRET_CONSUMER_KEY` | FatSecret dev console → API Keys → REST API OAuth 1.0 Credentials |
-| `FATSECRET_CONSUMER_SECRET` | same |
-| `FATSECRET_USER_TOKEN` | run `fatsecret-mcp auth` locally; copy `user_token` from `~/.config/fatsecret-mcp/config.json` |
-| `FATSECRET_USER_TOKEN_SECRET` | same; copy `user_token_secret` |
+| `FATSECRET_CONSUMER_KEY` | step 1 — FatSecret dev console |
+| `FATSECRET_CONSUMER_SECRET` | step 1 — same place |
+| `FATSECRET_USER_TOKEN` | step 2 — `user_token` field in `~/.config/fatsecret-mcp/config.json` |
+| `FATSECRET_USER_TOKEN_SECRET` | step 2 — `user_token_secret` field, same file |
 
 ### Connecting from your MCP client
 
