@@ -30,4 +30,4 @@ ENV PYTHONUNBUFFERED=1
 # Railway / Fly / Cloud Run inject $PORT; default 8000 for local.
 EXPOSE 8000
 
-CMD ["sh", "-c", "mcp-proxy --sse-host 0.0.0.0 --sse-port ${PORT:-8000} --pass-environment -- fatsecret-mcp serve"]
+CMD ["sh", "-c", "echo Starting on port ${PORT:-8000}; exec mcp-proxy --host 0.0.0.0 --port ${PORT:-8000} --pass-environment --allow-origin '*' fatsecret-mcp serve"]
