@@ -30,5 +30,8 @@ ENV PYTHONUNBUFFERED=1
 # Railway / Fly / Cloud Run inject $PORT; default 8000 for local.
 EXPOSE 8000
 
-# FastMCP serves SSE natively — no mcp-proxy needed (which mangled tool params under SSE bridging).
-CMD ["sh", "-c", "exec fatsecret-mcp serve --transport sse --host 0.0.0.0 --port ${PORT:-8000}"]
+# FastMCP serves streamable-http (the newer MCP HTTP transport) on /mcp.
+# Tried SSE first; openclaw's MCP-client mis-serialized something specific to the SSE
+# transport — every CallToolRequest came back as `-32602 Invalid request parameters`
+# even though a clean python `mcp` client over the same SSE endpoint worked fine.
+CMD ["sh", "-c", "exec fatsecret-mcp serve --transport streamable-http --host 0.0.0.0 --port ${PORT:-8000}"]
