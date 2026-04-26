@@ -134,7 +134,15 @@ def _register_tools(mcp: FastMCP, client: Client) -> None:
     def get_diary(date: str = "") -> str:
         """Diary entries for a date (YYYY-MM-DD, default today), grouped by meal."""
         d_int = _date_int(date)
-        res = client.call("food_entries.get.v2", {"date": str(d_int)})
+        # FS quirk: `food_entries.get.v2` returns error 1 ("unknown error, try again later")
+        # when there are zero entries for the date, instead of an empty list. Treat that
+        # specific code as "no entries" rather than propagating the error.
+        try:
+            res = client.call("food_entries.get.v2", {"date": str(d_int)})
+        except FatSecretError as e:
+            if e.code == 1:
+                return f"no entries for {date or 'today'}"
+            raise
         entries = (res.get("food_entries") or {}).get("food_entry") or []
         if isinstance(entries, dict):
             entries = [entries]
