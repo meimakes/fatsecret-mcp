@@ -204,6 +204,7 @@ Learned the hard way from production debugging. Don't want anyone else to repeat
 - **OAuth 1.0a rejects Authorization header**: FS only reads OAuth params from query string or POST body — not the `Authorization: OAuth ...` header that RFC 5849 permits. We use body form-urlencoded.
 - **request_token must be POST**: the HTTP method is part of the signature base string; a GET with identical params produces a different, invalid signature even if you think OAuth 1.0a is method-agnostic.
 - **OAuth 1.0 and OAuth 2.0 have separate credential pairs** on the same app. Same consumer_key string, different secrets. The FS dev console shows them under separate sections.
+- **`food_entries.get.v2` returns error 1 on empty diary**: when the requested date has zero entries, FS responds with `code=1, message="unknown error, try again later"` instead of an empty list. `get_diary` catches this specific code and returns "no entries for <date>".
 
 ## Scope notes
 
