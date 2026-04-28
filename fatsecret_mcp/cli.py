@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import os
 import sys
 
 from .client import Client
@@ -20,15 +21,50 @@ from .oauth import Consumer
 def cmd_serve(args: argparse.Namespace) -> int:
     from .server import build_server
     server = build_server()
-    if args.transport != "stdio":
-        server.settings.host = args.host
-        server.settings.port = args.port
-        # FastMCP's default DNS rebinding protection only allows localhost hosts.
-        # That defends against a browser tricking a local MCP server, which isn't
-        # the threat for a hosted SSE deploy behind HTTPS — disable so external
-        # hostnames (e.g. Railway's *.up.railway.app) reach the SSE endpoint.
-        server.settings.transport_security.enable_dns_rebinding_protection = False
-    server.run(transport=args.transport)
+
+    if args.transport == "stdio":
+        server.run(transport="stdio")
+        return 0
+
+    # Hosted transports (sse / streamable-http).
+    server.settings.host = args.host
+    server.settings.port = args.port
+    # FastMCP's default DNS rebinding protection only allows localhost hosts.
+    # Disable for hosted deploys so external hostnames reach the endpoint.
+    server.settings.transport_security.enable_dns_rebinding_protection = False
+
+    auth_token = os.environ.get("MCP_AUTH_TOKEN", "").strip()
+    if not auth_token:
+        # No bearer token configured: run unauthenticated (URL-as-secret posture).
+        server.run(transport=args.transport)
+        return 0
+
+    # Bearer-auth mode: wrap FastMCP's ASGI app in a middleware that requires
+    # `Authorization: Bearer <MCP_AUTH_TOKEN>` on every request.
+    from starlette.middleware.base import BaseHTTPMiddleware
+    from starlette.responses import JSONResponse
+    import uvicorn
+
+    class BearerAuthMiddleware(BaseHTTPMiddleware):
+        def __init__(self, app, token: str):
+            super().__init__(app)
+            self._token = token
+
+        async def dispatch(self, request, call_next):
+            # Allow CORS preflight unauthenticated; everything else requires bearer.
+            if request.method == "OPTIONS":
+                return await call_next(request)
+            if request.headers.get("authorization") != f"Bearer {self._token}":
+                return JSONResponse({"error": "unauthorized"}, status_code=401)
+            return await call_next(request)
+
+    if args.transport == "sse":
+        app = server.sse_app()
+    else:  # streamable-http
+        app = server.streamable_http_app()
+    app.add_middleware(BearerAuthMiddleware, token=auth_token)
+
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
     return 0
 
 

@@ -148,7 +148,19 @@ After deploy, Railway gives you a URL like `https://fatsecret-mcp-production-XXX
 
 ### Security posture
 
-This deployment is **single-user**: every caller on the URL writes to the FatSecret diary belonging to whichever user the env-var token came from. The Railway URL itself is unguessable (random subdomain) and is the gate — there's no per-call bearer auth out of the box. That's fine for "all my own agents are calling my own diary"; it's not fine for "anyone on the internet can call this." If you need stronger auth, put it behind Cloudflare Access / Tailscale Funnel, or run a small bearer-checking sidecar in front of `mcp-proxy`.
+This deployment is **single-user**: every caller on the URL writes to the FatSecret diary belonging to whichever user the env-var token came from.
+
+**Bearer auth (recommended).** Set a `MCP_AUTH_TOKEN` env var in Railway. When set, the server requires every request to include `Authorization: Bearer <MCP_AUTH_TOKEN>` and returns 401 otherwise. Generate a token with `python -c "import secrets; print(secrets.token_urlsafe(32))"` and paste into Railway. Your MCP client config then needs:
+
+```json
+{
+  "url": "https://your-deploy.up.railway.app/mcp",
+  "transport": "streamablehttp",
+  "headers": { "Authorization": "Bearer <MCP_AUTH_TOKEN>" }
+}
+```
+
+**Unauthenticated (URL-as-secret).** Skip `MCP_AUTH_TOKEN` and the server runs open. Fine for "all my own agents calling my own diary" if Railway gave you a random-suffixed subdomain; weaker if the subdomain is guessable.
 
 For multi-user / per-caller-token setups, this package isn't the right shape — you'd want a different MCP that accepts a user-token header per call.
 
