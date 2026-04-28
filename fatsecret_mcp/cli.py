@@ -39,10 +39,15 @@ def cmd_serve(args: argparse.Namespace) -> int:
         server.run(transport=args.transport)
         return 0
 
-    # Bearer-auth mode: wrap FastMCP's ASGI app in a middleware that requires
-    # `Authorization: Bearer <MCP_AUTH_TOKEN>` on every request.
+    # Bearer-auth mode: wrap FastMCP's ASGI app in a Starlette app whose
+    # middleware list is passed at construction time. (Calling
+    # `streamable_http_app().add_middleware()` after the fact doesn't take —
+    # FastMCP finalizes its own middleware stack before that runs.)
+    from starlette.applications import Starlette
+    from starlette.middleware import Middleware
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.responses import JSONResponse
+    from starlette.routing import Mount
     import uvicorn
 
     class BearerAuthMiddleware(BaseHTTPMiddleware):
@@ -59,10 +64,15 @@ def cmd_serve(args: argparse.Namespace) -> int:
             return await call_next(request)
 
     if args.transport == "sse":
-        app = server.sse_app()
+        mcp_app = server.sse_app()
     else:  # streamable-http
-        app = server.streamable_http_app()
-    app.add_middleware(BearerAuthMiddleware, token=auth_token)
+        mcp_app = server.streamable_http_app()
+
+    app = Starlette(
+        middleware=[Middleware(BearerAuthMiddleware, token=auth_token)],
+        routes=[Mount("/", app=mcp_app)],
+        lifespan=lambda _outer: mcp_app.router.lifespan_context(mcp_app),
+    )
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
     return 0
