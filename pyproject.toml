@@ -9,7 +9,7 @@ description = "Model Context Protocol server for the FatSecret platform API (OAu
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
-authors = [{ name = "Mei Park" }]
+authors = [{ name = "Diana Park" }]
 keywords = ["mcp", "fatsecret", "nutrition", "food-tracking", "claude", "llm"]
 classifiers = [
   "Development Status :: 4 - Beta",
@@ -32,8 +32,8 @@ dev = ["pytest>=8.0"]
 fatsecret-mcp = "fatsecret_mcp.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/meimakes/fatsecret-mcp"
-Issues = "https://github.com/meimakes/fatsecret-mcp/issues"
+Homepage = "https://github.com/madebydia/fatsecret-mcp"
+Issues = "https://github.com/madebydia/fatsecret-mcp/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["fatsecret_mcp"]

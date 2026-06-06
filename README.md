@@ -1,6 +1,6 @@
 # fatsecret-mcp
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template?template=https%3A%2F%2Fgithub.com%2Fmeimakes%2Ffatsecret-mcp)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template?template=https%3A%2F%2Fgithub.com%2Fmadebydia%2Ffatsecret-mcp)
 
 A Model Context Protocol (MCP) server for the [FatSecret Platform API](https://platform.fatsecret.com/platform-api), with OAuth 1.0a 3-legged user authentication so agents can read and write the authenticated user's food diary.
 
@@ -99,7 +99,7 @@ If you'd rather not rely on the entry-point script:
 
 For agents that aren't on the same host as the FS config file (a hosted bot, a phone-side agent, multiple gateways sharing one tracker), deploy this as an SSE endpoint:
 
-[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template?template=https%3A%2F%2Fgithub.com%2Fmeimakes%2Ffatsecret-mcp)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/new/template?template=https%3A%2F%2Fgithub.com%2Fmadebydia%2Ffatsecret-mcp)
 
 The button clones the repo, builds the `Dockerfile`, wraps the stdio MCP in [`mcp-proxy`](https://github.com/sparfenyuk/mcp-proxy), and exposes `/sse` on Railway's `$PORT`. **But it can't do the FatSecret OAuth dance for you** — that's interactive (browser + PIN). Run the dance locally first, then paste the four resulting tokens into Railway's env-var prompt.
 
