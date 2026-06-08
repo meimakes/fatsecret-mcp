@@ -9,7 +9,7 @@ description = "Model Context Protocol server for the FatSecret platform API (OAu
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
-authors = [{ name = "Diana Park" }]
+authors = [{ name = "Diana" }]
 keywords = ["mcp", "fatsecret", "nutrition", "food-tracking", "claude", "llm"]
 classifiers = [
   "Development Status :: 4 - Beta",
