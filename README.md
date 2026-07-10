@@ -201,9 +201,19 @@ Endpoint: `http://localhost:8000/sse`.
 contains `food_id`, `serving_id`, `number_of_units`, the original amount/unit,
 the serving and measurement descriptions, metric serving amount/unit, the
 scaled metric amount, a `raw_or_cooked` value when FatSecret explicitly
-provides one, the food-entry name, and calories/protein/fat/carbohydrate.
+provides one, the food-entry name, and every nutrient returned by the diary
+API. Nutrients are available both as direct entry fields and in a `nutrients`
+object; the original `macros` object remains for compatibility. Missing
+optional nutrients are `null`, not zero.
 Serving metadata is fetched from the food record and cached per distinct food
 within each request.
+
+Diary nutrient units follow FatSecret's API: calories are kcal; carbohydrate,
+protein, fats, fiber, and sugar are grams; cholesterol, sodium, potassium,
+vitamin C, calcium, and iron are milligrams; vitamin A is micrograms. Available
+fields are `calories`, `protein`, `fat`, `carbohydrate`, `saturated_fat`,
+`polyunsaturated_fat`, `monounsaturated_fat`, `cholesterol`, `sodium`,
+`potassium`, `fiber`, `sugar`, `vitamin_a`, `vitamin_c`, `calcium`, and `iron`.
 
 `replace_entry` maps directly to FatSecret's `food_entry.edit`, so its serving,
 amount, optional meal, and optional name changes happen in one upstream
@@ -233,7 +243,8 @@ Learned the hard way from production debugging. Don't want anyone else to repeat
 - **request_token must be POST**: the HTTP method is part of the signature base string; a GET with identical params produces a different, invalid signature even if you think OAuth 1.0a is method-agnostic.
 - **OAuth 1.0 and OAuth 2.0 have separate credential pairs** on the same app. Same consumer_key string, different secrets. The FS dev console shows them under separate sections.
 - **`food_entries.get.v2` returns error 1 on empty diary**: when the requested date has zero entries, FS responds with `code=1, message="unknown error, try again later"` instead of an empty list. Diary tools catch this specific code and return a structured day with an empty `entries` array.
-- **Diary reads omit serving metadata**: `food_entries.get.v2` returns the IDs and entry macros but not measurement or metric serving fields. Diary tools enrich each entry with its exact serving from `food.get.v4` and cache repeated food lookups.
+- **Diary reads omit serving metadata**: `food_entries.get.v2` returns the IDs and entry nutrients but not measurement or metric serving fields. Diary tools enrich each entry with its exact serving from `food.get.v4` and cache repeated food lookups.
+- **Optional diary nutrients may be absent**: FatSecret omits nutrient fields it does not have rather than returning zero. Diary tools preserve that distinction as `null` and total only the values FatSecret supplied.
 - **Entry edits are the only atomic replacement FatSecret supports**: `food_entry.edit` can change serving, units, name, and meal together, but cannot change the food or date. `replace_entry` intentionally exposes that boundary.
 
 ## Scope notes

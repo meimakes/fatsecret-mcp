@@ -21,6 +21,21 @@ EPOCH = _dt.date(1970, 1, 1)
 MAX_DIARY_RANGE_DAYS = 31
 
 _MACRO_FIELDS = ("calories", "protein", "fat", "carbohydrate")
+_NUTRIENT_FIELDS = (
+    *_MACRO_FIELDS,
+    "saturated_fat",
+    "polyunsaturated_fat",
+    "monounsaturated_fat",
+    "cholesterol",
+    "sodium",
+    "potassium",
+    "fiber",
+    "sugar",
+    "vitamin_a",
+    "vitamin_c",
+    "calcium",
+    "iron",
+)
 
 # FS-valid meal values. App also has "Snack" in its UI but the API rejects it;
 # snack entries must be logged as "Other". We normalize.
@@ -105,6 +120,25 @@ def _number(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def _optional_number(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _nutrient_totals(nutrient_sets: list[dict[str, float | None]]) -> dict[str, float | None]:
+    totals: dict[str, float | None] = {}
+    for field in _NUTRIENT_FIELDS:
+        values = [nutrients[field] for nutrients in nutrient_sets if nutrients[field] is not None]
+        # Preserve the existing zero totals for the always-present core macros,
+        # while optional nutrients remain null when FatSecret supplied no data.
+        totals[field] = sum(values) if values else (0.0 if field in _MACRO_FIELDS else None)
+    return totals
+
+
 def _raw_or_cooked(*descriptions: Any) -> str | None:
     """Return the first explicit preparation state FatSecret supplied."""
     for description in descriptions:
@@ -153,7 +187,8 @@ def _enrich_diary_entry(
         metric_amount = _number(metric_serving_amount) * entry_units / serving_units
 
     measurement = serving.get("measurement_description")
-    macros = {field: _number(entry.get(field)) for field in _MACRO_FIELDS}
+    nutrients = {field: _optional_number(entry.get(field)) for field in _NUTRIENT_FIELDS}
+    macros = {field: nutrients[field] for field in _MACRO_FIELDS}
     return {
         "food_entry_id": str(entry.get("food_entry_id") or ""),
         "date": (EPOCH + _dt.timedelta(days=int(entry.get("date_int") or 0))).isoformat(),
@@ -178,8 +213,9 @@ def _enrich_diary_entry(
             entry.get("food_entry_name"),
         ),
         "food_entry_name": entry.get("food_entry_name") or "",
-        **macros,
+        **nutrients,
         "macros": macros,
+        "nutrients": nutrients,
     }
 
 
@@ -190,10 +226,7 @@ def _day_diary(
 ) -> dict[str, Any]:
     food_cache = food_cache if food_cache is not None else {}
     entries = [_enrich_diary_entry(client, entry, food_cache) for entry in _diary_entries(client, date)]
-    totals = {
-        field: sum(entry["macros"][field] for entry in entries)
-        for field in _MACRO_FIELDS
-    }
+    totals = _nutrient_totals([entry["nutrients"] for entry in entries])
     return {"date": date.isoformat(), "entries": entries, "totals": totals}
 
 
@@ -209,10 +242,7 @@ def _diary_range(client: Client, start: _dt.date, end: _dt.date) -> dict[str, An
         _day_diary(client, start + _dt.timedelta(days=offset), food_cache)
         for offset in range(day_count)
     ]
-    totals = {
-        field: sum(day["totals"][field] for day in days)
-        for field in _MACRO_FIELDS
-    }
+    totals = _nutrient_totals([day["totals"] for day in days])
     return {
         "start_date": start.isoformat(),
         "end_date": end.isoformat(),
@@ -316,7 +346,8 @@ def _register_tools(mcp: FastMCP, client: Client) -> None:
         Every entry includes its food/serving IDs, exact FatSecret
         number_of_units, original amount and unit, serving and measurement
         descriptions, metric serving and scaled metric amounts, explicit
-        raw/cooked designation when present, entry name, and macros.
+        raw/cooked designation when present, entry name, and every nutrient
+        FatSecret supplied for the diary entry.
         """
         day = _dt.date.fromisoformat(date) if date else _dt.date.today()
         return json.dumps(_day_diary(client, day), indent=2)

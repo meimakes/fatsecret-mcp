@@ -34,6 +34,18 @@ def _entry(date: dt.date, entry_id: str = "entry-1"):
         "protein": "47.88",
         "fat": "12.51",
         "carbohydrate": "0",
+        "saturated_fat": "3.125",
+        "polyunsaturated_fat": "2.25",
+        "monounsaturated_fat": "5.75",
+        "cholesterol": "90",
+        "sodium": "450",
+        "potassium": "600",
+        "fiber": "",
+        # sugar intentionally omitted to verify unavailable nutrients stay null.
+        "vitamin_a": "10",
+        "vitamin_c": "0",
+        "calcium": "20",
+        "iron": "1.2",
     }
 
 
@@ -66,12 +78,25 @@ def test_day_diary_returns_complete_enriched_entry():
     result = _day_diary(client, date)
 
     assert result["date"] == "2026-07-09"
-    assert result["totals"] == {
+    expected_nutrients = {
         "calories": 315.0,
         "protein": 47.88,
         "fat": 12.51,
         "carbohydrate": 0.0,
+        "saturated_fat": 3.125,
+        "polyunsaturated_fat": 2.25,
+        "monounsaturated_fat": 5.75,
+        "cholesterol": 90.0,
+        "sodium": 450.0,
+        "potassium": 600.0,
+        "fiber": None,
+        "sugar": None,
+        "vitamin_a": 10.0,
+        "vitamin_c": 0.0,
+        "calcium": 20.0,
+        "iron": 1.2,
     }
+    assert result["totals"] == expected_nutrients
     entry = result["entries"][0]
     assert entry["food_id"] == "1641"
     assert entry["serving_id"] == "5041"
@@ -88,7 +113,18 @@ def test_day_diary_returns_complete_enriched_entry():
     assert entry["protein"] == 47.88
     assert entry["fat"] == 12.51
     assert entry["carbohydrate"] == 0.0
-    assert entry["macros"] == result["totals"]
+    assert entry["sodium"] == 450.0
+    assert entry["fiber"] is None
+    assert entry["sugar"] is None
+    assert entry["nutrients"] == expected_nutrients
+    assert entry["macros"] == {
+        "calories": 315.0,
+        "protein": 47.88,
+        "fat": 12.51,
+        "carbohydrate": 0.0,
+    }
+    for nutrient, value in expected_nutrients.items():
+        assert entry[nutrient] == value
 
 
 def test_diary_range_is_inclusive_and_caches_food_lookup():
@@ -108,6 +144,8 @@ def test_diary_range_is_inclusive_and_caches_food_lookup():
 
     assert [day["date"] for day in result["days"]] == ["2026-07-08", "2026-07-09"]
     assert result["totals"]["calories"] == 630.0
+    assert result["totals"]["sodium"] == 900.0
+    assert result["totals"]["fiber"] is None
     assert [method for method, _ in client.calls].count("food_entries.get.v2") == 2
     assert [method for method, _ in client.calls].count("food.get.v4") == 1
 
@@ -123,7 +161,24 @@ def test_diary_empty_error_is_an_empty_structured_day():
     assert _day_diary(client, date) == {
         "date": "2026-07-09",
         "entries": [],
-        "totals": {"calories": 0, "protein": 0, "fat": 0, "carbohydrate": 0},
+        "totals": {
+            "calories": 0.0,
+            "protein": 0.0,
+            "fat": 0.0,
+            "carbohydrate": 0.0,
+            "saturated_fat": None,
+            "polyunsaturated_fat": None,
+            "monounsaturated_fat": None,
+            "cholesterol": None,
+            "sodium": None,
+            "potassium": None,
+            "fiber": None,
+            "sugar": None,
+            "vitamin_a": None,
+            "vitamin_c": None,
+            "calcium": None,
+            "iron": None,
+        },
     }
 
 
