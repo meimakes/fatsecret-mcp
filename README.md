@@ -187,12 +187,28 @@ Endpoint: `http://localhost:8000/sse`.
 | `search_food` | FatSecret public DB search by name/brand |
 | `get_food` | Full macros + every available serving (returns `serving_id`s) |
 | `get_profile` | User's height / weight / goal |
-| `get_diary` | User's food entries for a date, grouped by meal, with totals |
+| `get_diary` | Enriched JSON diary entries for one date, with serving details and totals |
+| `get_diary_range` | Same enriched entries for an inclusive range of up to 31 days |
 | `log_food` | Write an entry to the user's diary |
+| `log_amount` | Write an entry using an absolute amount and unit |
+| `replace_entry` | Atomically replace an entry's serving/units (and optionally name/meal) |
 | `delete_entry` | Remove a diary entry by id |
 | `create_custom_food` | Create a custom food (Premier tier only) |
 
 `log_food` takes intuitive `servings` (multiplier of the chosen serving) and the MCP handles the conversion to FS's `number_of_units` semantics internally — see quirks below.
+
+`get_diary` and `get_diary_range` return machine-readable JSON. Every entry
+contains `food_id`, `serving_id`, `number_of_units`, the original amount/unit,
+the serving and measurement descriptions, metric serving amount/unit, the
+scaled metric amount, a `raw_or_cooked` value when FatSecret explicitly
+provides one, the food-entry name, and calories/protein/fat/carbohydrate.
+Serving metadata is fetched from the food record and cached per distinct food
+within each request.
+
+`replace_entry` maps directly to FatSecret's `food_entry.edit`, so its serving,
+amount, optional meal, and optional name changes happen in one upstream
+operation. FatSecret cannot edit an entry's `food_id` or date; changing either
+still requires create + delete and therefore cannot be atomic.
 
 ## Config resolution
 
@@ -216,7 +232,9 @@ Learned the hard way from production debugging. Don't want anyone else to repeat
 - **OAuth 1.0a rejects Authorization header**: FS only reads OAuth params from query string or POST body — not the `Authorization: OAuth ...` header that RFC 5849 permits. We use body form-urlencoded.
 - **request_token must be POST**: the HTTP method is part of the signature base string; a GET with identical params produces a different, invalid signature even if you think OAuth 1.0a is method-agnostic.
 - **OAuth 1.0 and OAuth 2.0 have separate credential pairs** on the same app. Same consumer_key string, different secrets. The FS dev console shows them under separate sections.
-- **`food_entries.get.v2` returns error 1 on empty diary**: when the requested date has zero entries, FS responds with `code=1, message="unknown error, try again later"` instead of an empty list. `get_diary` catches this specific code and returns "no entries for <date>".
+- **`food_entries.get.v2` returns error 1 on empty diary**: when the requested date has zero entries, FS responds with `code=1, message="unknown error, try again later"` instead of an empty list. Diary tools catch this specific code and return a structured day with an empty `entries` array.
+- **Diary reads omit serving metadata**: `food_entries.get.v2` returns the IDs and entry macros but not measurement or metric serving fields. Diary tools enrich each entry with its exact serving from `food.get.v4` and cache repeated food lookups.
+- **Entry edits are the only atomic replacement FatSecret supports**: `food_entry.edit` can change serving, units, name, and meal together, but cannot change the food or date. `replace_entry` intentionally exposes that boundary.
 
 ## Scope notes
 
@@ -225,7 +243,7 @@ On the free platform tier with a 3-legged user token, these work:
 - `foods.search`, `food.get.v4` (public DB reads)
 - `profile.get` (user profile)
 - `food_entries.get.v2` (user diary read)
-- `food_entry.create` / `food_entry.delete` (user diary writes)
+- `food_entry.create` / `food_entry.edit` / `food_entry.delete` (user diary writes)
 - `weight.update` (weight diary writes)
 
 Premier-only:

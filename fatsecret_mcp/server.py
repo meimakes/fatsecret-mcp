@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import math
+import re
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -16,6 +18,9 @@ from .client import Client, FatSecretError
 from .config import Config
 
 EPOCH = _dt.date(1970, 1, 1)
+MAX_DIARY_RANGE_DAYS = 31
+
+_MACRO_FIELDS = ("calories", "protein", "fat", "carbohydrate")
 
 # FS-valid meal values. App also has "Snack" in its UI but the API rejects it;
 # snack entries must be logged as "Other". We normalize.
@@ -82,6 +87,180 @@ def _date_int(date_str: str = "") -> int:
     return (d - EPOCH).days
 
 
+def _as_list(value: Any) -> list[dict[str, Any]]:
+    """Normalize FatSecret's historical singleton-or-array JSON shapes."""
+    if not value:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, dict):
+        return [value]
+    raise RuntimeError(f"unexpected FatSecret list value: {value!r}")
+
+
+def _number(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _raw_or_cooked(*descriptions: Any) -> str | None:
+    """Return the first explicit preparation state FatSecret supplied."""
+    for description in descriptions:
+        match = re.search(r"\b(raw|cooked|cooking)\b", str(description or ""), re.IGNORECASE)
+        if match:
+            return "raw" if match.group(1).lower() == "raw" else "cooked"
+    return None
+
+
+def _diary_entries(client: Client, date: _dt.date) -> list[dict[str, Any]]:
+    """Fetch one day, normalizing FatSecret's error-1 empty-day response."""
+    try:
+        res = client.call("food_entries.get.v2", {"date": str((date - EPOCH).days)})
+    except FatSecretError as e:
+        if e.code == 1:
+            return []
+        raise
+    return _as_list((res.get("food_entries") or {}).get("food_entry"))
+
+
+def _serving_for_entry(
+    client: Client,
+    entry: dict[str, Any],
+    food_cache: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Look up the exact serving referenced by a diary entry."""
+    food_id = str(entry.get("food_id") or "")
+    if food_id not in food_cache:
+        food_cache[food_id] = client.call("food.get.v4", {"food_id": food_id}).get("food") or {}
+    servings = _as_list((food_cache[food_id].get("servings") or {}).get("serving"))
+    serving_id = str(entry.get("serving_id") or "")
+    return next((s for s in servings if str(s.get("serving_id")) == serving_id), {})
+
+
+def _enrich_diary_entry(
+    client: Client,
+    entry: dict[str, Any],
+    food_cache: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    serving = _serving_for_entry(client, entry, food_cache)
+    entry_units = _number(entry.get("number_of_units"))
+    serving_units = _number(serving.get("number_of_units"))
+    metric_serving_amount = serving.get("metric_serving_amount")
+    metric_amount = None
+    if metric_serving_amount not in (None, "") and serving_units > 0:
+        metric_amount = _number(metric_serving_amount) * entry_units / serving_units
+
+    measurement = serving.get("measurement_description")
+    macros = {field: _number(entry.get(field)) for field in _MACRO_FIELDS}
+    return {
+        "food_entry_id": str(entry.get("food_entry_id") or ""),
+        "date": (EPOCH + _dt.timedelta(days=int(entry.get("date_int") or 0))).isoformat(),
+        "meal": entry.get("meal") or "Other",
+        "food_id": str(entry.get("food_id") or ""),
+        "serving_id": str(entry.get("serving_id") or ""),
+        "number_of_units": entry_units,
+        "original_amount": entry_units,
+        "original_unit": measurement,
+        "food_entry_description": entry.get("food_entry_description"),
+        "serving_description": serving.get("serving_description"),
+        "measurement_description": measurement,
+        "metric_serving_amount": (
+            _number(metric_serving_amount) if metric_serving_amount not in (None, "") else None
+        ),
+        "metric_serving_unit": serving.get("metric_serving_unit"),
+        "metric_amount": metric_amount,
+        "raw_or_cooked": _raw_or_cooked(
+            measurement,
+            serving.get("serving_description"),
+            entry.get("food_entry_description"),
+            entry.get("food_entry_name"),
+        ),
+        "food_entry_name": entry.get("food_entry_name") or "",
+        **macros,
+        "macros": macros,
+    }
+
+
+def _day_diary(
+    client: Client,
+    date: _dt.date,
+    food_cache: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    food_cache = food_cache if food_cache is not None else {}
+    entries = [_enrich_diary_entry(client, entry, food_cache) for entry in _diary_entries(client, date)]
+    totals = {
+        field: sum(entry["macros"][field] for entry in entries)
+        for field in _MACRO_FIELDS
+    }
+    return {"date": date.isoformat(), "entries": entries, "totals": totals}
+
+
+def _diary_range(client: Client, start: _dt.date, end: _dt.date) -> dict[str, Any]:
+    if end < start:
+        raise RuntimeError("end_date must be on or after start_date")
+    day_count = (end - start).days + 1
+    if day_count > MAX_DIARY_RANGE_DAYS:
+        raise RuntimeError(f"date range may not exceed {MAX_DIARY_RANGE_DAYS} days")
+
+    food_cache: dict[str, dict[str, Any]] = {}
+    days = [
+        _day_diary(client, start + _dt.timedelta(days=offset), food_cache)
+        for offset in range(day_count)
+    ]
+    totals = {
+        field: sum(day["totals"][field] for day in days)
+        for field in _MACRO_FIELDS
+    }
+    return {
+        "start_date": start.isoformat(),
+        "end_date": end.isoformat(),
+        "days": days,
+        "totals": totals,
+    }
+
+
+def _replace_entry(
+    client: Client,
+    food_entry_id: str,
+    serving_id: str,
+    number_of_units: float,
+    meal: str = "",
+    food_entry_name: str = "",
+) -> dict[str, Any]:
+    units = float(number_of_units)
+    if not math.isfinite(units) or units <= 0:
+        raise RuntimeError("number_of_units must be a positive finite number")
+
+    params = {
+        "food_entry_id": str(food_entry_id),
+        "serving_id": str(serving_id),
+        "number_of_units": f"{units:.4f}".rstrip("0").rstrip("."),
+    }
+    if meal:
+        meal_key = MEAL_NORMALIZE.get(meal.lower())
+        if not meal_key:
+            raise RuntimeError(f"invalid meal: {meal!r}. Use Breakfast/Lunch/Dinner/Other (snack→Other).")
+        params["meal"] = meal_key
+    if food_entry_name:
+        params["food_entry_name"] = food_entry_name
+
+    res = client.call("food_entry.edit", params)
+    success = res.get("success")
+    success_value = success.get("value") if isinstance(success, dict) else success
+    if str(success_value) != "1":
+        raise RuntimeError(f"FS did not confirm food_entry.edit success: {res}")
+    return {
+        "replaced": True,
+        "food_entry_id": str(food_entry_id),
+        "serving_id": str(serving_id),
+        "number_of_units": units,
+        **({"meal": params["meal"]} if "meal" in params else {}),
+        **({"food_entry_name": food_entry_name} if food_entry_name else {}),
+    }
+
+
 def _register_tools(mcp: FastMCP, client: Client) -> None:
     # ---- public food DB ----------------------------------------------------
 
@@ -132,42 +311,27 @@ def _register_tools(mcp: FastMCP, client: Client) -> None:
 
     @mcp.tool()
     def get_diary(date: str = "") -> str:
-        """Diary entries for a date (YYYY-MM-DD, default today), grouped by meal."""
-        d_int = _date_int(date)
-        # FS quirk: `food_entries.get.v2` returns error 1 ("unknown error, try again later")
-        # when there are zero entries for the date, instead of an empty list. Treat that
-        # specific code as "no entries" rather than propagating the error.
-        try:
-            res = client.call("food_entries.get.v2", {"date": str(d_int)})
-        except FatSecretError as e:
-            if e.code == 1:
-                return f"no entries for {date or 'today'}"
-            raise
-        entries = (res.get("food_entries") or {}).get("food_entry") or []
-        if isinstance(entries, dict):
-            entries = [entries]
-        if not entries:
-            return f"no entries for {date or 'today'}"
-        by_meal: dict[str, list[str]] = {}
-        totals = {"cal": 0.0, "p": 0.0, "f": 0.0, "c": 0.0}
-        for e in entries:
-            meal = e.get("meal", "Other")
-            cal = float(e.get("calories", 0) or 0)
-            p = float(e.get("protein", 0) or 0)
-            f_ = float(e.get("fat", 0) or 0)
-            c = float(e.get("carbohydrate", 0) or 0)
-            totals["cal"] += cal; totals["p"] += p; totals["f"] += f_; totals["c"] += c
-            by_meal.setdefault(meal, []).append(
-                f"  [{e.get('food_entry_id')}] {e.get('food_entry_name')} — "
-                f"{cal:.0f} cal, P{p:.1f} F{f_:.1f} C{c:.1f}"
-            )
-        out = [f"Diary {date or 'today'}:"]
-        for meal in ("Breakfast", "Lunch", "Dinner", "Other"):
-            if meal in by_meal:
-                out.append(f"{meal}:")
-                out.extend(by_meal[meal])
-        out.append(f"TOTAL: {totals['cal']:.0f} cal, P{totals['p']:.1f} F{totals['f']:.1f} C{totals['c']:.1f}")
-        return "\n".join(out)
+        """Get one day's diary as structured JSON (YYYY-MM-DD, default today).
+
+        Every entry includes its food/serving IDs, exact FatSecret
+        number_of_units, original amount and unit, serving and measurement
+        descriptions, metric serving and scaled metric amounts, explicit
+        raw/cooked designation when present, entry name, and macros.
+        """
+        day = _dt.date.fromisoformat(date) if date else _dt.date.today()
+        return json.dumps(_day_diary(client, day), indent=2)
+
+    @mcp.tool()
+    def get_diary_range(start_date: str, end_date: str) -> str:
+        """Get an inclusive date range of enriched diary entries as JSON.
+
+        Dates are YYYY-MM-DD. The range is limited to 31 days to keep the
+        upstream request count bounded. Serving lookups are cached across the
+        range, so each distinct food is fetched only once.
+        """
+        start = _dt.date.fromisoformat(start_date)
+        end = _dt.date.fromisoformat(end_date)
+        return json.dumps(_diary_range(client, start, end), indent=2)
 
     @mcp.tool()
     def log_food(
@@ -362,6 +526,33 @@ def _register_tools(mcp: FastMCP, client: Client) -> None:
             f"to {meal_key} on {date or 'today'} "
             f"(via serving '{chosen.get('serving_description')}', number_of_units={api_units})"
         )
+
+    @mcp.tool()
+    def replace_entry(
+        food_entry_id: str,
+        serving_id: str,
+        number_of_units: float,
+        meal: str = "",
+        food_entry_name: str = "",
+    ) -> str:
+        """Atomically replace an entry's serving and amount via food_entry.edit.
+
+        `number_of_units` uses FatSecret's native absolute-unit semantics; copy
+        the current value from get_diary when only changing the serving. Meal
+        and name are changed in the same upstream operation when supplied.
+
+        FatSecret does not allow an edit to change food_id or date. To change
+        either, create a new entry and delete the old one (which cannot be made
+        atomic by this API).
+        """
+        return json.dumps(_replace_entry(
+            client,
+            food_entry_id=food_entry_id,
+            serving_id=serving_id,
+            number_of_units=number_of_units,
+            meal=meal,
+            food_entry_name=food_entry_name,
+        ), indent=2)
 
     @mcp.tool()
     def delete_entry(food_entry_id: str) -> str:
