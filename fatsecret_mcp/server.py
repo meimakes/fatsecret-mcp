@@ -37,6 +37,27 @@ _NUTRIENT_FIELDS = (
     "iron",
 )
 
+_CUSTOM_FOOD_OPTIONAL_NUTRIENTS = (
+    "calories_from_fat",
+    "saturated_fat",
+    "polyunsaturated_fat",
+    "monounsaturated_fat",
+    "trans_fat",
+    "cholesterol",
+    "sodium",
+    "potassium",
+    "fiber",
+    "sugar",
+    "added_sugars",
+    "vitamin_d",
+    "vitamin_a",
+    "vitamin_c",
+    "calcium",
+    "iron",
+)
+_CUSTOM_FOOD_BRAND_TYPES = {"manufacturer", "restaurant", "supermarket"}
+_CUSTOM_FOOD_SERVING_UNITS = {"g", "ml", "oz"}
+
 # FS-valid meal values. App also has "Snack" in its UI but the API rejects it;
 # snack entries must be logged as "Other". We normalize.
 MEAL_NORMALIZE = {
@@ -288,6 +309,141 @@ def _replace_entry(
         "number_of_units": units,
         **({"meal": params["meal"]} if "meal" in params else {}),
         **({"food_entry_name": food_entry_name} if food_entry_name else {}),
+    }
+
+
+def _custom_food_decimal(value: Any, field: str) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise RuntimeError(f"{field} must be a non-negative finite number") from None
+    if not math.isfinite(number) or number < 0:
+        raise RuntimeError(f"{field} must be a non-negative finite number")
+    return f"{number:.6f}".rstrip("0").rstrip(".") or "0"
+
+
+def _create_custom_food(
+    client: Client,
+    *,
+    name: str,
+    brand: str = "",
+    calories: float = 0,
+    protein: float = 0,
+    fat: float = 0,
+    carbs: float = 0,
+    serving_size: str = "1 serving",
+    serving_amount: float | None = None,
+    serving_amount_unit: str = "g",
+    brand_type: str = "manufacturer",
+    calories_from_fat: float | None = None,
+    saturated_fat: float | None = None,
+    polyunsaturated_fat: float | None = None,
+    monounsaturated_fat: float | None = None,
+    trans_fat: float | None = None,
+    cholesterol: float | None = None,
+    sodium: float | None = None,
+    potassium: float | None = None,
+    fiber: float | None = None,
+    sugar: float | None = None,
+    added_sugars: float | None = None,
+    vitamin_d: float | None = None,
+    vitamin_a: float | None = None,
+    vitamin_c: float | None = None,
+    calcium: float | None = None,
+    iron: float | None = None,
+) -> dict[str, Any]:
+    """Create a user food through FatSecret's Premier-only v2 method."""
+    food_name = name.strip()
+    if not food_name:
+        raise RuntimeError("name must not be blank")
+    serving_description = serving_size.strip()
+    if not serving_description:
+        raise RuntimeError("serving_size must not be blank")
+
+    normalized_brand_type = brand_type.lower().strip()
+    if normalized_brand_type not in _CUSTOM_FOOD_BRAND_TYPES:
+        allowed = ", ".join(sorted(_CUSTOM_FOOD_BRAND_TYPES))
+        raise RuntimeError(f"brand_type must be one of: {allowed}")
+
+    params = {
+        "brand_type": normalized_brand_type,
+        "food_name": food_name,
+        "serving_size": serving_description,
+        "calories": _custom_food_decimal(calories, "calories"),
+        "fat": _custom_food_decimal(fat, "fat"),
+        "carbohydrate": _custom_food_decimal(carbs, "carbs"),
+        "protein": _custom_food_decimal(protein, "protein"),
+    }
+    brand_name = brand.strip()
+    if brand_name:
+        params["brand_name"] = brand_name
+
+    if serving_amount is not None:
+        try:
+            amount = float(serving_amount)
+        except (TypeError, ValueError):
+            raise RuntimeError("serving_amount must be a positive finite number") from None
+        if not math.isfinite(amount) or amount <= 0:
+            raise RuntimeError("serving_amount must be a positive finite number")
+        normalized_unit = serving_amount_unit.lower().strip()
+        if normalized_unit not in _CUSTOM_FOOD_SERVING_UNITS:
+            allowed = ", ".join(sorted(_CUSTOM_FOOD_SERVING_UNITS))
+            raise RuntimeError(f"serving_amount_unit must be one of: {allowed}")
+        params["serving_amount"] = f"{amount:.6f}".rstrip("0").rstrip(".")
+        params["serving_amount_unit"] = normalized_unit
+
+    optional_nutrients = {
+        "calories_from_fat": calories_from_fat,
+        "saturated_fat": saturated_fat,
+        "polyunsaturated_fat": polyunsaturated_fat,
+        "monounsaturated_fat": monounsaturated_fat,
+        "trans_fat": trans_fat,
+        "cholesterol": cholesterol,
+        "sodium": sodium,
+        "potassium": potassium,
+        "fiber": fiber,
+        "sugar": sugar,
+        "added_sugars": added_sugars,
+        "vitamin_d": vitamin_d,
+        "vitamin_a": vitamin_a,
+        "vitamin_c": vitamin_c,
+        "calcium": calcium,
+        "iron": iron,
+    }
+    for field in _CUSTOM_FOOD_OPTIONAL_NUTRIENTS:
+        value = optional_nutrients[field]
+        if value is not None:
+            params[field] = _custom_food_decimal(value, field)
+
+    try:
+        res = client.call("food.create.v2", params)
+    except FatSecretError as e:
+        message = e.message.lower()
+        if e.code in {10, 14} or any(
+            marker in message for marker in ("scope", "premier", "subscription", "not available")
+        ):
+            return {
+                "created": False,
+                "error": "premier_required",
+                "message": (
+                    "FatSecret custom-food creation is Premier Exclusive, and this "
+                    "developer app does not have access to food.create.v2. Upgrade the "
+                    "app's FatSecret Platform edition, then retry the same request."
+                ),
+                "fatsecret_error": {"code": e.code, "message": e.message},
+            }
+        raise
+
+    food_id = res.get("food_id")
+    food_id = food_id.get("value") if isinstance(food_id, dict) else food_id
+    if not food_id:
+        raise RuntimeError(f"FS returned no food_id — unexpected response: {res}")
+    return {
+        "created": True,
+        "food_id": str(food_id),
+        "food_name": food_name,
+        "brand_name": brand_name or None,
+        "serving_size": serving_description,
     }
 
 
@@ -593,26 +749,72 @@ def _register_tools(mcp: FastMCP, client: Client) -> None:
 
     @mcp.tool()
     def create_custom_food(
-        name: str, brand: str = "",
-        calories: float = 0, protein: float = 0, fat: float = 0, carbs: float = 0,
+        name: str,
+        brand: str = "",
+        calories: float = 0,
+        protein: float = 0,
+        fat: float = 0,
+        carbs: float = 0,
+        serving_size: str = "1 serving",
+        serving_amount: float | None = None,
+        serving_amount_unit: str = "g",
+        brand_type: str = "manufacturer",
+        calories_from_fat: float | None = None,
+        saturated_fat: float | None = None,
+        polyunsaturated_fat: float | None = None,
+        monounsaturated_fat: float | None = None,
+        trans_fat: float | None = None,
+        cholesterol: float | None = None,
+        sodium: float | None = None,
+        potassium: float | None = None,
+        fiber: float | None = None,
+        sugar: float | None = None,
+        added_sugars: float | None = None,
+        vitamin_d: float | None = None,
+        vitamin_a: float | None = None,
+        vitamin_c: float | None = None,
+        calcium: float | None = None,
+        iron: float | None = None,
     ) -> str:
-        """Create a custom food with per-100g macros.
+        """Create a custom food whose nutrients describe one serving.
 
-        PREMIER-ONLY on FatSecret's platform tier. Free-tier apps will
-        receive 'invalid_scope' or similar. Upgrade the app in the FS dev
-        console if you need custom foods.
+        `serving_size` is the label description (for example, "1 bar"). Pair
+        `serving_amount` with `serving_amount_unit` (g, ml, or oz) when the
+        standardized serving weight/volume is known. Optional nutrients use
+        FatSecret's documented label units: fats/fiber/sugars in g;
+        cholesterol/sodium/potassium/vitamin C/calcium/iron in mg; vitamins A
+        and D in mcg.
+
+        This calls FatSecret's `food.create.v2`, a Premier Exclusive method.
+        Apps without Premier access receive structured `premier_required`
+        JSON instead of a misleading success.
         """
-        try:
-            res = client.call("foods.create", {
-                "food_name": name,
-                "brand_name": brand or "",
-                "calories": str(calories),
-                "protein": str(protein),
-                "fat": str(fat),
-                "carbohydrate": str(carbs),
-            })
-        except FatSecretError as e:
-            if "scope" in e.message.lower() or "premier" in e.message.lower():
-                return f"create_custom_food requires FS premier tier. Current error: {e}"
-            raise
-        return json.dumps(res, indent=2)
+        return json.dumps(_create_custom_food(
+            client,
+            name=name,
+            brand=brand,
+            calories=calories,
+            protein=protein,
+            fat=fat,
+            carbs=carbs,
+            serving_size=serving_size,
+            serving_amount=serving_amount,
+            serving_amount_unit=serving_amount_unit,
+            brand_type=brand_type,
+            calories_from_fat=calories_from_fat,
+            saturated_fat=saturated_fat,
+            polyunsaturated_fat=polyunsaturated_fat,
+            monounsaturated_fat=monounsaturated_fat,
+            trans_fat=trans_fat,
+            cholesterol=cholesterol,
+            sodium=sodium,
+            potassium=potassium,
+            fiber=fiber,
+            sugar=sugar,
+            added_sugars=added_sugars,
+            vitamin_d=vitamin_d,
+            vitamin_a=vitamin_a,
+            vitamin_c=vitamin_c,
+            calcium=calcium,
+            iron=iron,
+        ), indent=2)

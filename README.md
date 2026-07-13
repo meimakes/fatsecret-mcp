@@ -193,7 +193,7 @@ Endpoint: `http://localhost:8000/sse`.
 | `log_amount` | Write an entry using an absolute amount and unit |
 | `replace_entry` | Atomically replace an entry's serving/units (and optionally name/meal) |
 | `delete_entry` | Remove a diary entry by id |
-| `create_custom_food` | Create a custom food (Premier tier only) |
+| `create_custom_food` | Create an exact custom-food label (Premier tier only) |
 
 `log_food` takes intuitive `servings` (multiplier of the chosen serving) and the MCP handles the conversion to FS's `number_of_units` semantics internally — see quirks below.
 
@@ -219,6 +219,13 @@ fields are `calories`, `protein`, `fat`, `carbohydrate`, `saturated_fat`,
 amount, optional meal, and optional name changes happen in one upstream
 operation. FatSecret cannot edit an entry's `food_id` or date; changing either
 still requires create + delete and therefore cannot be atomic.
+
+`create_custom_food` sends one serving's label values through FatSecret's
+`food.create.v2` method. It accepts a human-readable serving size, optional
+metric serving amount (`g`, `ml`, or `oz`), brand metadata, and all optional
+nutrients supported by the v2 endpoint. If the configured developer app does
+not have access, it returns structured `premier_required` JSON; FatSecret marks
+this method Premier Exclusive.
 
 ## Config resolution
 
@@ -259,7 +266,7 @@ On the free platform tier with a 3-legged user token, these work:
 
 Premier-only:
 
-- `foods.create` (custom foods)
+- `food.create.v2` (custom foods)
 - Anything marked `*` in the FS API docs
 
 Water tracking is **not exposed** by the FatSecret API at any tier. The mobile app's water widget is app-internal state.
@@ -271,7 +278,9 @@ pip install -e '.[dev]'
 pytest
 ```
 
-The unit tests are offline — signature math only. Integration tests against the live FS API aren't included (would require live credentials); use `fatsecret-mcp whoami` as the smoke test after setup.
+The unit tests are offline, including request-shape coverage for custom foods.
+Integration tests against the live FS API aren't included (they would require
+live credentials); use `fatsecret-mcp whoami` as the smoke test after setup.
 
 ## License
 
